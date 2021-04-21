@@ -1,0 +1,43 @@
+cs231n.txt
+
+This environment is executed in both a Conda env and Docker image,
+depending on the assignment you're in. A1 & A2 are Conda Env,
+A2 & A3 are Docker.
+
+#########################
+# Conda 				#
+#########################
+
+Since the early assignments are managed entirely through pip,
+and conda has no real visibility into pip-installed dependencies,
+you must use pip to install pylint & black.
+
+ALSO, latest pylint relies on an incompatible version of astroid,
+so we CAN'T use the legacy-resolver. so, do:
+
+ALSO, since jupyter notebooks aren't ipython kernel aware, install ipykernel:
+
+	cd .../cs231n
+	conda remove --name cs231n --all
+	conda env create --file .\cs231n.yaml
+	conda activate cs231n
+
+	# # fixed: included pip commands in the conda yaml.
+	# cd assignment1
+	# pip install -r requirements.txt
+	# pip install ipykernel pylint black flake8
+	
+	cd assignmentX
+	code .
+
+For updates:
+	conda deactivate
+	conda env update --file .\cs231n.yaml  # prune is useless since everything is through pip
+	conda activate cs231n
+
+
+#########################
+# Docker 				#
+#########################
+
+Use the latest NVIDIA tf-2.x image on local docker desktop.

@@ -1,0 +1,15 @@
+name: cs231n
+dependencies:
+  - python=3.7
+  - pip
+  - pip:
+    - -r file:requirements.txt # Lecturers' dependencies:
+    # required stuff the lecturers forgot
+    - ipykernel 
+    # My choice:
+    - scikit-learn
+    - jupyterlab
+    # Dev-related: Formatting, linting,
+    - pylint
+    - black
+    - flake8
