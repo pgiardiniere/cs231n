@@ -8,6 +8,8 @@
       <excludeFolder url="file://$MODULE_DIR$/assignment1/.ipynb_checkpoints" />
       <excludeFolder url="file://$MODULE_DIR$/assignment2/.ipynb_checkpoints" />
       <excludeFolder url="file://$MODULE_DIR$/assignment1/cs231n/classifiers/.ipynb_checkpoints" />
+      <excludeFolder url="file://$MODULE_DIR$/assignment1/cs231n/datasets/cifar-10-batches-py" />
+      <excludeFolder url="file://$MODULE_DIR$/assignment2/cs231n/datasets/cifar-10-batches-py" />
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
