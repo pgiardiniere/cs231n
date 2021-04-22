@@ -92,7 +92,6 @@ class TwoLayerNet(object):
 
         # Compute raw fc-net scores: Affine -> relu -> affine
         scores, cache_1 = affine_relu_forward(X, w1, b1)
-        # scores, cache_2 = affine_relu_forward(scores, W2, b2)  # from jariasf, pretty sure it's wrong.
         scores, cache_2 = affine_forward(scores, w2, b2)
 
         # If y is None then we are in test mode so just return scores.
@@ -213,10 +212,10 @@ class FullyConnectedNet(object):
         # dropout layer so that the layer knows the dropout probability and the mode
         # (train / test). You can pass the same dropout_param to each dropout layer.
         self.dropout_param = {}
-        if self.use_dropout:
-            self.dropout_param = {"mode": "train", "p": dropout}
-            if seed is not None:
-                self.dropout_param["seed"] = seed
+        # if self.use_dropout:  # TRIAL: use_dropout is superfluous
+        self.dropout_param = {"mode": "train", "p": dropout}
+        if seed is not None:
+            self.dropout_param["seed"] = seed
 
         # With batch normalization we need to keep track of running means and
         # variances, so we need to pass a special bn_param object to each batch
@@ -244,14 +243,13 @@ class FullyConnectedNet(object):
 
         # Set train/test mode for batchnorm params and dropout param since they
         # behave differently during training and testing.
-        if self.use_dropout:
-            self.dropout_param["mode"] = mode
+        # if self.use_dropout:  # TRIAL: self.use_dropout is superfluous.
+        self.dropout_param["mode"] = mode
         if self.normalization == "batchnorm":
             for bn_param in self.bn_params:
                 bn_param["mode"] = mode
         scores = None
 
-        # NEW IMPLEMENTATION
         ############################################################################
         # TODO: Implement the forward pass for the fully-connected net, computing  #
         # the class scores for X and storing them in the scores variable.          #
@@ -264,15 +262,9 @@ class FullyConnectedNet(object):
         # self.bn_params[1] to the forward pass for the second batch normalization #
         # layer, etc.                                                              #
         ############################################################################
-        # We can handle arbitrary hidden layers inside a loop, with 2 edge cases.
-        # They are the first and last scores, which are handled outside the loop.
-        # NEW implementation:
-        # Doesn't do any fancy tupling of intermediate cache lists.
         fc_caches = [*np.zeros(self.num_layers)]
         relu_caches = [*np.zeros(self.num_layers - 1)]
-        dropout_caches = [*np.zeros(self.num_layers - 1)]
-
-        # Actually, handle this in the loop.
+        do_caches = [*np.zeros(self.num_layers - 1)]
 
         # For all layers, compute the forward pass. Special cases at first/last entries.
         for i in range(self.num_layers):
@@ -282,9 +274,11 @@ class FullyConnectedNet(object):
             if i == 0:
                 scores, fc_caches[i] = affine_forward(X, W, b)
                 scores, relu_caches[i] = relu_forward(scores)
+                scores, do_caches[i] = dropout_forward(scores, self.dropout_param)
             elif i < self.num_layers - 1:
                 scores, fc_caches[i] = affine_forward(scores, W, b)
                 scores, relu_caches[i] = relu_forward(scores)
+                scores, do_caches[i] = dropout_forward(scores, self.dropout_param)
             else:
                 scores, fc_caches[i] = affine_forward(scores, W, b)
 
@@ -313,21 +307,19 @@ class FullyConnectedNet(object):
             regularizer_sum += np.sum(self.params[f"W{i+1}"] ** 2)
         loss += 0.5 * self.reg * regularizer_sum
 
-        # Similar to scores above, calculate the grads, edge case at the beginning.
+        # Backward pass - Calculate the grads similar to scores above
         dXs = [*np.zeros(self.num_layers)]
         dWs = [*np.zeros(self.num_layers)]
         dbs = [*np.zeros(self.num_layers)]
-        # For convenience, we build each list of derivatives (grads) in reverse, then
-        # swap at the end. This logic is the same as the 2-layer NN
 
-        # Backprop - iterate backwards through our lists, creating the grads as we go.
+        # For all layers, compute the backward pass. Special case at the first iteration.
+        # Iterate backwards through the layers, creating the grads as we go.
         for i in reversed(range(self.num_layers)):
             if i == self.num_layers - 1:
                 dXs[i], dWs[i], dbs[i] = affine_backward(d_softmax, fc_caches[i])
             else:
-                # dx = dropout_backward(args)
-                # TODO: first arg should be the dXs[i+1] from below. send the dx to below in its place.
-                dx = relu_backward(dXs[i + 1], relu_caches[i])
+                dx = dropout_backward(dXs[i + 1], do_caches[i])
+                dx = relu_backward(dx, relu_caches[i])
                 dXs[i], dWs[i], dbs[i] = affine_backward(dx, fc_caches[i])
 
         for i, dW in enumerate(dWs):
