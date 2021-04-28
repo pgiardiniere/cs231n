@@ -208,6 +208,11 @@ class FullyConnectedNet(object):
             )
             self.params["b" + f"{i+1}"] = np.zeros(layer_dims[i + 1])
 
+        if self.normalization is not None:
+            for i in range(self.num_layers - 1):
+                self.params[f"beta{i + 1}"] = np.zeros(layer_dims[i + 1])
+                self.params[f"gamma{i + 1}"] = np.ones(layer_dims[i + 1])
+
         # When using dropout we need to pass a dropout_param dictionary to each
         # dropout layer so that the layer knows the dropout probability and the mode
         # (train / test). You can pass the same dropout_param to each dropout layer.
@@ -265,18 +270,29 @@ class FullyConnectedNet(object):
         fc_caches = [*np.zeros(self.num_layers)]
         relu_caches = [*np.zeros(self.num_layers - 1)]
         do_caches = [*np.zeros(self.num_layers - 1)]
+        bn_caches = [*np.zeros(self.num_layers - 1)]
+        beta = gamma = bn_param = None
 
-        # For all layers, compute the forward pass. Special cases at first/last entries.
+        # For all layers, compute the forward pass. Layers follow the given pattern:
+        # affine -> batchnorm or layernorm -> relu -> dropout
+        #
+        # Normalization & dropout are optional. Special cases at first/last entries.
         for i in range(self.num_layers):
             W = self.params[f"W{i + 1}"]
             b = self.params[f"b{i + 1}"]
+            if self.normalization is not None and i < self.num_layers - 1:
+                beta = self.params[f"beta{i + 1}"]
+                gamma = self.params[f"gamma{i + 1}"]
+                bn_param = self.bn_params[i]
 
             if i == 0:
                 scores, fc_caches[i] = affine_forward(X, W, b)
+                scores, bn_caches[i] = self.norm_forward(scores, gamma, beta, bn_param)
                 scores, relu_caches[i] = relu_forward(scores)
                 scores, do_caches[i] = dropout_forward(scores, self.dropout_param)
             elif i < self.num_layers - 1:
                 scores, fc_caches[i] = affine_forward(scores, W, b)
+                scores, bn_caches[i] = self.norm_forward(scores, gamma, beta, bn_param)
                 scores, relu_caches[i] = relu_forward(scores)
                 scores, do_caches[i] = dropout_forward(scores, self.dropout_param)
             else:
@@ -311,6 +327,8 @@ class FullyConnectedNet(object):
         dXs = [*np.zeros(self.num_layers)]
         dWs = [*np.zeros(self.num_layers)]
         dbs = [*np.zeros(self.num_layers)]
+        dgammas = [*np.zeros(self.num_layers)]
+        dbetas = [*np.zeros(self.num_layers)]
 
         # For all layers, compute the backward pass. Special case at the first iteration.
         # Iterate backwards through the layers, creating the grads as we go.
@@ -320,6 +338,7 @@ class FullyConnectedNet(object):
             else:
                 dx = dropout_backward(dXs[i + 1], do_caches[i])
                 dx = relu_backward(dx, relu_caches[i])
+                dx, dgammas[i], dbetas[i] = self.norm_backward(dx, bn_caches[i])
                 dXs[i], dWs[i], dbs[i] = affine_backward(dx, fc_caches[i])
 
         for i, dW in enumerate(dWs):
@@ -328,5 +347,32 @@ class FullyConnectedNet(object):
 
             grads[f"W{i+1}"] = dWs[i]
             grads[f"b{i+1}"] = dbs[i]
+            if self.normalization is not None and i < len(dWs) - 1:
+                grads[f"gamma{i+1}"] = dgammas[i]
+                grads[f"beta{i+1}"] = dbetas[i]
 
         return loss, grads
+
+    def norm_forward(self, x: np.ndarray, gamma, beta, bn_param):
+        """
+        Wrapper function which calls the correct batch or layer norm, if any.
+        """
+        if bn_param is None:
+            return x, None
+        elif self.normalization == "batchnorm":
+            scores, bn_cache = batchnorm_forward(x, gamma, beta, bn_param)
+            return scores, bn_cache
+        elif self.normalization == "layernorm":
+            pass
+
+    def norm_backward(self, dx: np.ndarray, cache):
+        """
+        Wrapper function which calls the correct batch or layer norm, if any.
+        """
+        if self.normalization is None:
+            return dx, None, None
+        elif self.normalization == "batchnorm":
+            dx, dgamma, dbeta = batchnorm_backward_alt(dx, cache)
+            return dx, dgamma, dbeta
+        elif self.normalization == "layernorm":
+            pass
