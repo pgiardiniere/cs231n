@@ -61,29 +61,42 @@ class ThreeLayerConvNet(object):
         # **the width and height of the input are preserved**. Take a look at      #
         # the start of the loss() function to see how that happens.                #
         ############################################################################
-        F, C, H, W = 
+        F, C, H, W = num_filters, *input_dim  # noqa
+        # FH, FW: Filter height/width. PH, PW: Pool height/width.
+        FH, FW = filter_size, filter_size
+        PH: int = 1 + (H - 2) // 2
+        PW: int = 1 + (W - 2) // 2
 
-        w1 = np.random.randn()
-        w2 = np.random.randn()
-        w3 = np.random.randn()
-        bs = np.zeros()
+        # w1 is our convolutional layer, w2 & w3 are affine layers (b's similarly).
+        #
+        # Per def given in docstring, there's a pooling layer after the conv layer,
+        # so adjust size of w2 accordingly.
+        w1 = weight_scale * np.random.randn(F, C, FH, FW)
+        b1 = np.zeros(F)  # Breaks the pattern, but fast_forward expects it this way.
+        w2 = weight_scale * np.random.randn(F * PH * PW, hidden_dim)
+        b2 = np.zeros(hidden_dim)
+        w3 = weight_scale * np.random.randn(hidden_dim, num_classes)
+        b3 = np.zeros(num_classes)
+
+        self.params["W1"], self.params["W2"], self.params["W3"] = w1, w2, w3
+        self.params["b1"], self.params["b2"], self.params["b3"] = b1, b2, b3
 
         for k, v in self.params.items():
             self.params[k] = v.astype(dtype)
 
-    def loss(self, X, y=None):
+    def loss(self, x, y=None):
         """
         Evaluate loss and gradient for the three-layer convolutional network.
 
         Input / output: Same API as TwoLayerNet in fc_net.py.
         """
-        W1, b1 = self.params["W1"], self.params["b1"]
-        W2, b2 = self.params["W2"], self.params["b2"]
-        W3, b3 = self.params["W3"], self.params["b3"]
+        w1, b1 = self.params["W1"], self.params["b1"]
+        w2, b2 = self.params["W2"], self.params["b2"]
+        w3, b3 = self.params["W3"], self.params["b3"]
 
         # pass conv_param to the forward pass for the convolutional layer
         # Padding and stride chosen to preserve the input spatial size
-        filter_size = W1.shape[2]
+        filter_size = w1.shape[2]
         conv_param = {"stride": 1, "pad": (filter_size - 1) // 2}
 
         # pass pool_param to the forward pass for the max-pooling layer
@@ -98,14 +111,9 @@ class ThreeLayerConvNet(object):
         # Remember you can use the functions defined in cs231n/fast_layers.py and  #
         # cs231n/layer_utils.py in your implementation (already imported).         #
         ############################################################################
-        # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-
-        pass
-
-        # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-        ############################################################################
-        #                             END OF YOUR CODE                             #
-        ############################################################################
+        scores, cv_cache = conv_relu_pool_forward(x, w1, b1, conv_param, pool_param)
+        scores, fc_1_cache = affine_relu_forward(scores, w2, b2)
+        scores, fc_2_cache = affine_forward(scores, w3, b3)
 
         if y is None:
             return scores
@@ -121,13 +129,19 @@ class ThreeLayerConvNet(object):
         # automated tests, make sure that your L2 regularization includes a factor #
         # of 0.5 to simplify the expression for the gradient.                      #
         ############################################################################
-        # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
+        loss, dout = softmax_loss(scores, y)
 
-        pass
+        # Do the backpropagation:
+        dx3, dw3, db3 = affine_backward(dout, fc_2_cache)
+        dx2, dw2, db2 = affine_relu_backward(dx3, fc_1_cache)
+        dx1, dw1, db1 = conv_relu_pool_backward(dx2, cv_cache)
 
-        # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-        ############################################################################
-        #                             END OF YOUR CODE                             #
-        ############################################################################
+        # L2 regularization:
+        w1 += self.reg * w1
+        w2 += self.reg * w2
+        w3 += self.reg * w3
+
+        grads["W3"], grads["W2"], grads["W1"] = dw3, dw2, dw1
+        grads["b3"], grads["b2"], grads["b1"] = b3, b2, b1
 
         return loss, grads
