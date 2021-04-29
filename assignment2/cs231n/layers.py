@@ -494,15 +494,44 @@ def conv_forward_naive(x, w, b, conv_param):
     # TODO: Implement the convolutional forward pass.                         #
     # Hint: you can use the function np.pad for padding.                      #
     ###########################################################################
-    # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
+    stride = conv_param["stride"]
+    pad = conv_param["pad"]
+    N, C, H, W = x.shape
+    F, _, FH, FW = w.shape
 
-    pass
+    msg = "Input dim and filter dim must be compatible with zero-pad and stride amounts"
+    assert (H - FH + 2 * pad) % stride == 0, msg
+    assert (W - FW + 2 * pad) % stride == 0, msg
+    outH = 1 + (H - FH + 2 * pad) // stride
+    outW = 1 + (W - FW + 2 * pad) // stride
 
-    # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-    ###########################################################################
-    #                             END OF YOUR CODE                            #
-    ###########################################################################
-    cache = (x, w, b, conv_param)
+    # The size of our output is N samples, channel-size/depth given by F (num filters),
+    # with width/Height outH, outW.
+    #
+    # As a general rule, it's useful to set up pad & stride such that the outW/outH
+    # match the input H/W, but we don't have to do it that way.
+    out = np.zeros((N, F, outH, outW))
+
+    # Zero-Pad the input by none on the first two dims (num samples, num channels)
+    # Zero-Pad the input by given pad amount for the height/width dims.
+    x_pad = np.pad(x, ((0, 0), (0, 0), (pad, pad), (pad, pad)), "constant")
+    H_pad, W_pad = x_pad.shape[2], x_pad.shape[3]
+
+    # To perform matrix multiplies, reshape (flatten) weights matrices into rows and
+    # input data matrices into columns, then reshape again to restore original structure.
+    w_row = w.reshape(F, C * FH * FW)
+    x_col = np.zeros((C * FH * FW, outH * outW))
+    for n in range(N):
+        neuron = 0
+        for i in range(0, H_pad - FH + 1, stride):
+            for j in range(0, W_pad - FW + 1, stride):
+                x_col[:, neuron] = x_pad[n, :, i : i + FH, j : j + FW].reshape(
+                    C * FH * FW
+                )
+                neuron += 1
+        out[n] = (w_row.dot(x_col) + b.reshape(F, 1)).reshape(F, outH, outW)
+
+    cache = (x_pad, w, b, conv_param)
     return out, cache
 
 
@@ -523,14 +552,40 @@ def conv_backward_naive(dout, cache):
     ###########################################################################
     # TODO: Implement the convolutional backward pass.                        #
     ###########################################################################
-    # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
+    # Set up local variables:
+    x_pad, w, b, conv_param = cache
+    N, F, outH, outW = dout.shape
+    N, C, Hpad, Wpad = x_pad.shape
+    FH, FW = w.shape[2], w.shape[3]
+    stride = conv_param["stride"]
+    pad = conv_param["pad"]
 
-    pass
+    # Initialize all gradients:
+    dx = np.zeros((N, C, Hpad - 2 * pad, Wpad - 2 * pad))
+    dw = np.zeros(w.shape)
+    db = np.zeros(b.shape)
 
-    # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-    ###########################################################################
-    #                             END OF YOUR CODE                            #
-    ###########################################################################
+    # As before, do naive matmuls. Reshape (flatten) weights matrices into rows and
+    # input data matrices into columns, then reshape again to restore original structure.
+    w_row = w.reshape(F, C * FH * FW)
+    x_col = np.zeros((C * FH * FW, outH * outW))
+    for n in range(N):
+        out_col = dout[n].reshape(F, outH * outW)
+        w_out = w_row.T.dot(out_col)
+        dx_n = np.zeros((C, Hpad, Wpad))  # Init derivative of x for sample n
+        neuron = 0
+        for i in range(0, Hpad - FH + 1, stride):
+            for j in range(0, Wpad - FW + 1, stride):
+                dx_n[:, i : i + FH, j : j + FW] += w_out[:, neuron].reshape(C, FH, FW)
+                x_col[:, neuron] = x_pad[n, :, i : i + FH, j : j + FW].reshape(
+                    C * FH * FW
+                )
+                neuron += 1
+        # Update all gradients (cut out any leftover padding):
+        dx[n] = dx_n[:, pad:-pad, pad:-pad]
+        dw += out_col.dot(x_col.T).reshape(F, C, FH, FW)
+        db += out_col.sum(axis=1)
+
     return dx, dw, db
 
 
@@ -557,14 +612,33 @@ def max_pool_forward_naive(x, pool_param):
     ###########################################################################
     # TODO: Implement the max-pooling forward pass                            #
     ###########################################################################
-    # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
+    N, C, H, W = x.shape
+    stride = pool_param["stride"]
+    PH = pool_param["pool_height"]
+    PW = pool_param["pool_width"]
 
-    pass
+    msg = "Input dim less pooling dim must be divisible by step interval"
+    assert (H - PH) % stride == 0, msg
+    assert (W - PW) % stride == 0, msg
+    outH = 1 + (H - PH) // stride
+    outW = 1 + (W - PW) // stride
 
-    # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-    ###########################################################################
-    #                             END OF YOUR CODE                            #
-    ###########################################################################
+    # We know out pooling output will take this shape:
+    out = np.zeros((N, C, outH, outW))
+
+    # Step by stride amount, selecting pools of size (PW x PH), extracting local max.
+    #
+    # As before, we'll use extensive reshaping to perform intermediate calculations.
+    for n in range(N):
+        out_col = np.zeros((C, outH * outW))
+        neuron = 0
+        for i in range(0, H - PH + 1, stride):
+            for j in range(0, W - PW + 1, stride):
+                pool = x[n, :, i : i + PH, j : j + PW].reshape(C, PH * PW)
+                out_col[:, neuron] = pool.max(axis=1)
+                neuron += 1
+        out[n] = out_col.reshape((C, outH, outW))
+
     cache = (x, pool_param)
     return out, cache
 
@@ -584,14 +658,30 @@ def max_pool_backward_naive(dout, cache):
     ###########################################################################
     # TODO: Implement the max-pooling backward pass                           #
     ###########################################################################
-    # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
+    x, pool_param = cache
+    N, C, outH, outW = dout.shape
+    H, W = x.shape[2], x.shape[3]
+    stride = pool_param["stride"]
+    PH, PW = pool_param["pool_height"], pool_param["pool_width"]
+    dx = np.zeros(x.shape)
 
-    pass
+    # Recall that the max gate 'routes' backprop - i.e. it takes the incoming dout,
+    # then passes it as-is to the max val of the layer before it, setting all the
+    # non-max values to 0.
+    for n in range(N):
+        dout_row = dout[n].reshape(C, outH * outW)
+        neuron = 0
+        for i in range(0, H - PH + 1, stride):
+            for j in range(0, W - PW + 1, stride):
+                pool_region = x[n, :, i : i + PH, j : j + PW].reshape(C, PH * PW)
+                max_pool_indices = pool_region.argmax(axis=1)
+                dout_cur = dout_row[:, neuron]
+                neuron += 1
 
-    # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-    ###########################################################################
-    #                             END OF YOUR CODE                            #
-    ###########################################################################
+                dmax_pool = np.zeros(pool_region.shape)
+                dmax_pool[np.arange(C), max_pool_indices] = dout_cur
+                dx[n, :, i : i + PH, j : j + PW] += dmax_pool.reshape((C, PH, PW))
+
     return dx
 
 

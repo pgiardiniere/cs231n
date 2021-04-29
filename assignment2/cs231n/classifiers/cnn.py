@@ -61,14 +61,12 @@ class ThreeLayerConvNet(object):
         # **the width and height of the input are preserved**. Take a look at      #
         # the start of the loss() function to see how that happens.                #
         ############################################################################
-        # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
+        F, C, H, W = 
 
-        pass
-
-        # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-        ############################################################################
-        #                             END OF YOUR CODE                             #
-        ############################################################################
+        w1 = np.random.randn()
+        w2 = np.random.randn()
+        w3 = np.random.randn()
+        bs = np.zeros()
 
         for k, v in self.params.items():
             self.params[k] = v.astype(dtype)
