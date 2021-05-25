@@ -151,7 +151,53 @@ class CaptioningRNN(object):
         ############################################################################
         # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
 
-        pass
+        # Forward pass:
+        # 1) Affine transform to compute initial hidden state:
+        h0 = features @ W_proj + b_proj
+
+        # 2) Use word embedding layer to transform captions_in (from inds to vecs)
+        x, cache_embed = word_embedding_forward(captions_in, W_embed)
+
+        # 3) Use a vanilla RNN to process the sequence of input word vectors,
+        #    producing hidden state vecs for ALL timesteps.
+
+        h, cache_rnn = (
+            rnn_forward(x, h0, Wx, Wh, b)
+            if self.cell_type == "rnn"
+            else lstm_forward(x, h0, Wx, Wh, b)
+        )
+
+        # 4) Use a (temporal) affine transform to compute scores over the vocaulary
+        #    at EVERY timestep using the hidden states
+        scores, cache_fc = temporal_affine_forward(h, W_vocab, b_vocab)
+
+        # 5) Use a (temporal) softmax to compute loss using captions_out and
+        #    the given mask to ignore <NULL> words at ends of sequences.
+        loss, dout = temporal_softmax_loss(scores, captions_out, mask, verbose=True)
+
+        # Now continue into the backward pass:
+        dout, dW_vocab, db_vocab = temporal_affine_backward(dout, cache_fc)
+
+        dx, dh0, dWx, dWh, db = (
+            rnn_backward(dout, cache_rnn)
+            if self.cell_type == "rnn"
+            else lstm_backward(dout, cache_rnn)
+        )
+
+        dW_embed = word_embedding_backward(dx, cache_embed)
+        dW_proj = features.T @ dh0
+        db_proj = dh0.sum(axis=0)
+
+        grads = {
+            "W_embed": dW_embed,
+            "Wx": dWx,
+            "Wh": dWh,
+            "b": db,
+            "W_vocab": dW_vocab,
+            "b_vocab": db_vocab,
+            "W_proj": dW_proj,
+            "b_proj": db_proj,
+        }
 
         # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
         ############################################################################
@@ -188,10 +234,16 @@ class CaptioningRNN(object):
         captions = self._null * np.ones((N, max_length), dtype=np.int32)
 
         # Unpack parameters
-        W_proj, b_proj = self.params["W_proj"], self.params["b_proj"]
-        W_embed = self.params["W_embed"]
-        Wx, Wh, b = self.params["Wx"], self.params["Wh"], self.params["b"]
-        W_vocab, b_vocab = self.params["W_vocab"], self.params["b_vocab"]
+        W_proj, b_proj, W_embed, Wx, Wh, b, W_vocab, b_vocab = (
+            self.params["W_proj"],
+            self.params["b_proj"],
+            self.params["W_embed"],
+            self.params["Wx"],
+            self.params["Wh"],
+            self.params["b"],
+            self.params["W_vocab"],
+            self.params["b_vocab"],
+        )
 
         ###########################################################################
         # TODO: Implement test-time sampling for the model. You will need to      #
@@ -219,7 +271,29 @@ class CaptioningRNN(object):
         ###########################################################################
         # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
 
-        pass
+        h0 = features @ W_proj + b_proj
+        c0 = np.zeros(h0.shape)
+
+        # At test time, we only feed the start tokens from ground truth. Instead,
+        # we use our sampled output from time t as the input to generate output at t+1
+        V, W = W_embed.shape
+        x = np.ones((N, W)) * W_embed[self._start]  # Mask only start tokens
+
+        # This half-vectorized approach batch-processes all input samples N at once,
+        # but linearly probes through timesteps (hence the max_length iterable).
+        for i in range(max_length):
+            if self.cell_type == "rnn":
+                next_h, _ = rnn_step_forward(x, h0, Wx, Wh, b)
+            else:
+                next_h, next_c, _ = lstm_step_forward(x, h0, c0, Wx, Wh, b)
+                c0 = next_c
+
+            out = next_h @ W_vocab + b_vocab
+
+            out_argmaxed = out.argmax(axis=1)  # Argmax on softmax loss
+            captions[:, i] = out_argmaxed  # Assign a word to current timestep...
+            x = W_embed[out_argmaxed]  # ...and use that same word as input for t+1
+            h0 = next_h
 
         # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
         ############################################################################

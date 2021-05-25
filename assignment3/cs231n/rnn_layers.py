@@ -273,15 +273,29 @@ def lstm_step_forward(x, prev_h, prev_c, Wx, Wh, b):
     # TODO: Implement the forward pass for a single timestep of an LSTM.        #
     # You may want to use the numerically stable sigmoid implementation above.  #
     #############################################################################
-    # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
+    # # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
+    N, H = prev_h.shape
 
-    pass
+    # Work with transposes to make indexing much nicer. We'll undo this at the end.
+    a = Wx.T @ x.T + Wh.T @ prev_h.T + b[:, np.newaxis]
 
+    # We have each of the required gates in our temp matrix a, slice them out:
+    i = sigmoid(a[:H])
+    f = sigmoid(a[H : 2 * H])
+    o = sigmoid(a[2 * H : 3 * H])
+    g = np.tanh(a[3 * H : 4 * H])
+
+    # Use the LSTM equations as given:
+    next_c = f * prev_c.T + i * g
+    next_h = o * np.tanh(next_c)
+
+    next_c = next_c.T
+    next_h = next_h.T
+    cache = (next_c, i, f, o, g, x, prev_h.copy(), Wh, Wx, prev_c)
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ##############################################################################
     #                               END OF YOUR CODE                             #
     ##############################################################################
-
     return next_h, next_c, cache
 
 
@@ -308,16 +322,55 @@ def lstm_step_backward(dnext_h, dnext_c, cache):
     #                                                                           #
     # HINT: For sigmoid and tanh you can compute local derivatives in terms of  #
     # the output value from the nonlinearity.                                   #
+    #
+    # (from earlier) Note that d/dx of tanh(x) simplifies to
+    #     1 - tanh^2(x)
+    #
+    # Also Note that d/dx sigmoid(x) is:
+    #     exp(-x)/((exp(-x) + 1)**2)
+    #   which we can simplify to:
+    #     sigmoid(x)(1 - sigmoid(x))
     #############################################################################
-    # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
+    c, i, f, o, g, x, prev_h, Wh, Wx, prev_c = cache
 
-    pass
+    c = c.T
+    prev_c = prev_c.T
+    dnext_h = dnext_h.T
+    dnext_c = dnext_c.T
 
-    # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
+    # First, calculate dc to find dprev_c. Recall the LSTM equations in my code:
+    #   next_c = f * prev_c.T + i * g  --> deriv outputs dprev_c
+    #   next_h = o * np.tanh(next_c)  --> deriv outputs dc
+    # *Remember to use both upstream derivatives (dnext_c, dnext_h)*
+    dc = dnext_c + dnext_h * o * (1 - np.tanh(c) ** 2)
+    dprev_c = dc * f
+
+    # Then, can find the other 4 grads required.
+    # # d{i,f,o,g} step one - get inner functions (sigmoid / tanh).
+    di = dc * g
+    df = dc * prev_c
+    do = dnext_h * np.tanh(c)
+    dg = dc * i
+    # # d{i,f,o,g} step two - get outer functions using chain rule.
+    di = di * i * (1 - i)
+    df = df * f * (1 - f)
+    do = do * o * (1 - o)
+    dg = dg * (1 - g * g)
+
+    da = np.vstack((di, df, do, dg))
+
+    # Get all final derivatives, remembering to undo convenience transposes:
+    dWx = da @ x
+    dWh = da @ prev_h
+    dprev_h = Wh @ da
+    dx = Wx @ da
+    db = np.sum(da, axis=1)
+    # Don't forget dprev_c!
+    dWx, dWh, dprev_h, dx, dprev_c = dWx.T, dWh.T, dprev_h.T, dx.T, dprev_c.T
+
     ##############################################################################
     #                               END OF YOUR CODE                             #
     ##############################################################################
-
     return dx, dprev_h, dprev_c, dWx, dWh, db
 
 
@@ -349,8 +402,18 @@ def lstm_forward(x, h0, Wx, Wh, b):
     # You should use the lstm_step_forward function that you just defined.      #
     #############################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
+    # cache = []
 
-    pass
+    N, T, D, H = x.shape[0], x.shape[1], x.shape[2], h0.shape[1]
+    h = np.zeros((N, T, H))
+    h[:, -1, :] = h0  # Put initial state in last ind of states to overwrite later.
+    c = np.zeros((N, H))
+    cache: List[Any] = [0 for _ in range(T)]
+
+    for i in range(T):
+        h[:, i, :], c, cache[i] = lstm_step_forward(
+            x[:, i, :], h[:, i - 1, :], c, Wx, Wh, b
+        )
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ##############################################################################
@@ -381,8 +444,30 @@ def lstm_backward(dh, cache):
     # You should use the lstm_step_backward function that you just defined.     #
     #############################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
+    N, T, H = dh.shape
+    D = cache[0][8].shape[0]
 
-    pass
+    # Unlike rnn_backward(), we'll just set up all our structures first and do
+    # all calculations in the loop. Makes things a little more explicit.
+    dx = np.zeros((N, T, D))
+    dprev_h = np.zeros((N, H))
+    dc = np.zeros((N, H))
+    dWx = np.zeros((D, 4 * H))
+    dWh = np.zeros((H, 4 * H))
+    db = np.zeros(4 * H)
+
+    for i in reversed(range(T)):
+        # Recall dh has the 'general' upstream gradient, but not dh of internal timesteps
+        # Must add the current dprev_h to it when stepping back throughout the sequence.
+        next_step = lstm_step_backward(dh[:, i, :] + dprev_h, dc, cache[i])
+        # Sum into all vals except dprev_h & dc, which move at each timestep.
+        dx[:, i, :] += next_step[0]
+        dprev_h = next_step[1]
+        dc = next_step[2]
+        dWx += next_step[3]
+        dWh += next_step[4]
+        db += next_step[5]
+    dh0 = dprev_h
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ##############################################################################
@@ -480,8 +565,8 @@ def temporal_softmax_loss(x, y, mask, verbose=False):
     dx_flat /= N
     dx_flat *= mask_flat[:, None]
 
-    if verbose:
-        print("dx_flat: ", dx_flat.shape)
+    # if verbose:
+    #     print("dx_flat: ", dx_flat.shape)
 
     dx = dx_flat.reshape(N, T, V)
 
