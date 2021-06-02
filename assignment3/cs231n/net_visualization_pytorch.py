@@ -1,9 +1,11 @@
 import torch
 import random
+import torchvision
 import torchvision.transforms as T
 import numpy as np
 from .image_utils import SQUEEZENET_MEAN, SQUEEZENET_STD
 from scipy.ndimage.filters import gaussian_filter1d
+
 
 def compute_saliency_maps(X, y, model):
     """
@@ -20,6 +22,7 @@ def compute_saliency_maps(X, y, model):
     """
     # Make sure the model is in "test" mode
     model.eval()
+    model = torchvision.models.squeezenet1_1(pretrained=True)
 
     # Make input tensor require gradient
     X.requires_grad_()
@@ -34,13 +37,34 @@ def compute_saliency_maps(X, y, model):
     ##############################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
 
-    pass
+    # FORWARD pass: Get scores, then filter out only those entries
+    # which are for the correct class (as this is Softmax loss).
+    scores = model(X)
+    correct_scores = scores.gather(1, y.view(-1, 1)).squeeze()
+
+    # BACKWARD pass: We can call torch.Tensor.backward() on arbitrary losses -
+    # this is the auto-differentiation engine doing its job.
+
+    # Since correct_scores.requires_grad = true, we must pass the gradient arg.
+    #
+    # The gradient arg is: "Gradient w.r.t. the tensor [and is] a tensor of matching
+    # type and location, [containing] the grad of the differentiated function w.r.t. self."
+    #
+    # Simple math - we know dX/dX = [1] (arr of ones in shape of X), so this is easy:
+    correct_scores.backward(torch.ones(y.shape[0]))
+
+    # torch.Tensor.backward() stores its outputs by updating the tensor's .grad attribute.
+    dImage_dModelWeights = X.grad
+
+    # Per the paper, we then take the absolute value and keep the max val across channels:
+    saliency, _ = torch.max(np.absolute(dImage_dModelWeights), dim=1)
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ##############################################################################
     #                             END OF YOUR CODE                               #
     ##############################################################################
     return saliency
+
 
 def make_fooling_image(X, target_y, model):
     """
@@ -76,13 +100,41 @@ def make_fooling_image(X, target_y, model):
     ##############################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
 
-    pass
+    iters = 100
+
+    # for i in range(iters):
+    #     scores = model(X_fooling)
+    #     target_score = scores[:, target_y]
+    #
+    #     if torch.argmax(scores) == target_y:
+
+    scores = model(X_fooling)
+    i = 0
+    # This loop should generally be able to fool in <100 iterations.
+    while torch.argmax(scores) != target_y and 1 <= 100:
+        scores = model(X_fooling)
+        target_score = scores[:, target_y]
+
+        target_score.backward()  # Output is written to X_fooling.grad
+        dx = learning_rate * X_fooling.grad / np.linalg.norm(X_fooling.grad)
+
+        with torch.no_grad():
+            X_fooling += learning_rate * dx
+
+        i += 1
+
+        if torch.argmax(scores) == target_y:
+            print("It worked!")
+
+    if i == 100:
+        print("Nothing after 100 iters boss D:")
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ##############################################################################
     #                             END OF YOUR CODE                               #
     ##############################################################################
     return X_fooling
+
 
 def class_visualization_update_step(img, model, target_y, l2_reg, learning_rate):
     ########################################################################
@@ -103,29 +155,35 @@ def class_visualization_update_step(img, model, target_y, l2_reg, learning_rate)
 
 
 def preprocess(img, size=224):
-    transform = T.Compose([
-        T.Resize(size),
-        T.ToTensor(),
-        T.Normalize(mean=SQUEEZENET_MEAN.tolist(),
-                    std=SQUEEZENET_STD.tolist()),
-        T.Lambda(lambda x: x[None]),
-    ])
+    transform = T.Compose(
+        [
+            T.Resize(size),
+            T.ToTensor(),
+            T.Normalize(mean=SQUEEZENET_MEAN.tolist(), std=SQUEEZENET_STD.tolist()),
+            T.Lambda(lambda x: x[None]),
+        ]
+    )
     return transform(img)
 
+
 def deprocess(img, should_rescale=True):
-    transform = T.Compose([
-        T.Lambda(lambda x: x[0]),
-        T.Normalize(mean=[0, 0, 0], std=(1.0 / SQUEEZENET_STD).tolist()),
-        T.Normalize(mean=(-SQUEEZENET_MEAN).tolist(), std=[1, 1, 1]),
-        T.Lambda(rescale) if should_rescale else T.Lambda(lambda x: x),
-        T.ToPILImage(),
-    ])
+    transform = T.Compose(
+        [
+            T.Lambda(lambda x: x[0]),
+            T.Normalize(mean=[0, 0, 0], std=(1.0 / SQUEEZENET_STD).tolist()),
+            T.Normalize(mean=(-SQUEEZENET_MEAN).tolist(), std=[1, 1, 1]),
+            T.Lambda(rescale) if should_rescale else T.Lambda(lambda x: x),
+            T.ToPILImage(),
+        ]
+    )
     return transform(img)
+
 
 def rescale(x):
     low, high = x.min(), x.max()
     x_rescaled = (x - low) / (high - low)
     return x_rescaled
+
 
 def blur_image(X, sigma=1):
     X_np = X.cpu().clone().numpy()
@@ -133,6 +191,7 @@ def blur_image(X, sigma=1):
     X_np = gaussian_filter1d(X_np, sigma, axis=3)
     X.copy_(torch.Tensor(X_np).type_as(X))
     return X
+
 
 def jitter(X, ox, oy):
     """
