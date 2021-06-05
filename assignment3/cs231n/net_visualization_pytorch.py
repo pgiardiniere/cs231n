@@ -146,8 +146,26 @@ def class_visualization_update_step(img, model, target_y, l2_reg, learning_rate)
     ########################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
 
-    pass
+    # Note: This isn't on the 'raw' score, but on the l2-regularized score
+    # this is -- almost -- like a loss function
+    #
+    # Per the suggested paper's notes (section 2), we are l2-regularizing
+    # the scores _before_ the posterior softmax.
+    #
+    # Then, we're solving a simple optimization problem - find argmax S_c(I).
+    #
+    # By formulating this as a maximization on S_c (ignoring all other classes)
+    # we do something mathematically similar to maximizing on the softmax (loss) f'n,
+    # but this little 'trick' offers more visually appealing results.
+    scores = model(img)
+    target_score = scores[:, target_y] - l2_reg * torch.norm(img) ** 2
+    # target_score = scores[:, target_y] - l2_reg * torch.sum(img * img)
+    target_score.backward()
 
+    # no return value, so we edit img in-place.
+    with torch.no_grad():
+        img += learning_rate * img.grad
+    pass
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ########################################################################
     #                             END OF YOUR CODE                         #
