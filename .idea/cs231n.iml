@@ -11,7 +11,7 @@
       <excludeFolder url="file://$MODULE_DIR$/assignment1/cs231n/datasets/cifar-10-batches-py" />
       <excludeFolder url="file://$MODULE_DIR$/assignment2/cs231n/datasets/cifar-10-batches-py" />
     </content>
-    <orderEntry type="inheritedJdk" />
+    <orderEntry type="jdk" jdkName="Python 3.7 (cs231n)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
   <component name="PyDocumentationSettings">
