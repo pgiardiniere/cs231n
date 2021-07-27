@@ -39,14 +39,7 @@ class PositionalEncoding(nn.Module):
         # less than 5 lines of code.                                               #
         ############################################################################
         # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-        # for i in range(max_len):
-        #     for j in range(embed_dim):
-        #         if i % 2 == 0:
-        #             pe[0, i, j] = math.sin(i * 10000 ** (-j / embed_dim))
-        #         else:
-        #             pe[0, i, j] = math.cos(i * 10000 ** (-(j - 1) / embed_dim))
 
-        # pe[]
         for i in range(max_len):
             for j in range(embed_dim):
                 if j % 2 == 0:
@@ -85,11 +78,7 @@ class PositionalEncoding(nn.Module):
         # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
 
         for name, buff in self.named_buffers():
-            # print(name)
-            # print(buff.shape)
-            # print(x.shape)
             output = x + buff[:, :S, :D]
-
         output = self.dropout(output)
 
         # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
@@ -145,17 +134,11 @@ class MultiHeadAttention(nn.Module):
         # solution is less than 5 lines.                                           #
         ############################################################################
         # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-        self.alignment = nn.Linear(embed_dim, embed_dim)
-        self.attention = nn.Softmax(dim=1)
-        self.dropout_attn = nn.Dropout(p=dropout)
-        self.context_vectors = nn.Linear(embed_dim, embed_dim)
 
-        self.num_heads = num_heads
-
-        # self.alignment = self.query * self.key / math.sqrt(embed_dim)
-        # self.attention = torch.softmax(self.alignment, dim=1)
-        # self.dropout_attn = torch.dropout(self.attention, dropout, train=True)
-        # self.context_vectors = self.dropout_attn @ self.value
+        self.d_k = embed_dim // num_heads
+        self.h = num_heads
+        self.embed_dim = embed_dim
+        self.dropout = nn.Dropout(p=dropout)
 
         # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
         ############################################################################
@@ -203,49 +186,36 @@ class MultiHeadAttention(nn.Module):
         ############################################################################
         # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
 
-        # Case:
-        # self.alignment = self.query * self.key / math.sqrt(embed_dim)
-        # self.attention = torch.softmax(self.alignment, dim=1)
-        # self.dropout_attn = torch.dropout(self.attention, dropout, train=True)
-        # self.context_vectors = self.dropout_attn @ self.value
+        if attn_mask is not None:
+            attn_mask = attn_mask.unsqueeze(1)
+        batch_size = query.size(0)
 
-        # Inputs:
-        #  - query: shape (N, S, E)
-        #  - key: shape (N, T, E)
-        #  - value: shape (N, T, E)
-        #  - attn_mask: shape (T, S)
-        # Returns:
-        #  - output: shape (N, S, E)
+        # FANCY impl
+        # Do all linear projections, l(input), and express them with dimensions in right place:
+        # query, key, value = [
+        #     linear(x).view(batch_size, -1, self.heads, self.d_k).transpose(1, 2)
+        #     for linear, x in zip((self.key, self.query, self.value), (key, query, value))
+        # ]
+        # MY (verbose) impl:
+        key = self.key(key)
+        query = self.query(query)
+        value = self.value(value)
+        key = key.view(batch_size, -1, self.h, self.d_k).transpose(1, 2)
+        query = query.view(batch_size, -1, self.h, self.d_k).transpose(1, 2)
+        value = value.view(batch_size, -1, self.h, self.d_k).transpose(1, 2)
 
-        # # First, do the linear layers to get key/query/value based on input data:
-        # key = self.key(key)
-        # query = self.query(query)
-        # value = self.value(value)
-        # if attn_mask is not None:
-        #     pass  # TODO: something with self.proj?
+        # Apply attention on all projected vectors in batch
+        if attn_mask is None:
+            print(attn_mask)
+        else:
+            print(attn_mask.shape)
+            print(query.shape)
+        x, _ = self.attention(query, key, value, mask=attn_mask)
 
-        # FIRST:
-        # split into N, H, T, E/H
-        for head in range(self.num_heads):
-            # head 1
-            pass
-            # head 2
-            pass
-
-        # Then, the logic:
-        alignment = self.alignment(query * key / math.sqrt(D))
-        attention = self.attention(alignment)
-        dropout_attn = self.dropout_attn(attention)
-        # print(dropout_attn.T.shape)
-        # print(value.shape)
-
-        # torch.masked_fill()
-        # output = self.context_vectors(dropout_attn.transpose(-1, -2) @ value)
-        # PyTorch supports "None"-style indexing for new axes:
-        #   https://sparrow.dev/adding-a-dimension-to-a-tensor-in-pytorch/
-        output = self.context_vectors(
-            torch.sum(dropout_attn[:, :, :, None] @ value.unsqueeze(dim=2), dim=3)
-        )
+        # Concat using a view and apply a the final linear layer
+        # (concatenates each head's scores and then projects them down to a prediction).
+        x = x.transpose(1, 2).contiguous().view(batch_size, -1, self.h * self.d_k)
+        output = self.proj(x)
 
         # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
         ############################################################################
@@ -253,84 +223,22 @@ class MultiHeadAttention(nn.Module):
         ############################################################################
         return output
 
+    def attention(self, query, key, value, mask=None):
+        """Compute 'Scaled Dot Product Attention'
 
-# DEBUG:
-if __name__ == "__main__":
-    print("in main")
-    import numpy as np
-
-    def rel_error(x, y):
-        """ returns relative error """
-        return np.max(np.abs(x - y) / (np.maximum(1e-8, np.abs(x) + np.abs(y))))
-
-    torch.manual_seed(231)
-
-    # Choose dimensions such that they are all unique for easier debugging:
-    # Specifically, the following values correspond to N=1, H=2, T=3, E//H=4, and E=8.
-    batch_size = 1
-    sequence_length = 3
-    embed_dim = 8
-    attn = MultiHeadAttention(embed_dim, num_heads=2)
-
-    # Self-attention.
-    data = torch.randn(batch_size, sequence_length, embed_dim)
-    self_attn_output = attn(query=data, key=data, value=data)
-
-    # Masked self-attention.
-    mask = torch.randn(sequence_length, sequence_length) < 0.5
-    masked_self_attn_output = attn(query=data, key=data, value=data, attn_mask=mask)
-
-    # Attention using two inputs.
-    other_data = torch.randn(batch_size, sequence_length, embed_dim)
-    attn_output = attn(query=data, key=other_data, value=other_data)
-
-    expected_self_attn_output = np.asarray(
-        [
-            [
-                [-0.2494, 0.1396, 0.4323, -0.2411, -0.1547, 0.2329, -0.1936, -0.1444],
-                [-0.1997, 0.1746, 0.7377, -0.3549, -0.2657, 0.2693, -0.2541, -0.2476],
-                [-0.0625, 0.1503, 0.7572, -0.3974, -0.1681, 0.2168, -0.2478, -0.3038],
-            ]
-        ]
-    )
-    print(
-        "self_attn_output error: ",
-        rel_error(expected_self_attn_output, self_attn_output.detach().numpy()),
-    )
-
-    expected_masked_self_attn_output = np.asarray(
-        [
-            [
-                [-0.1347, 0.1934, 0.8628, -0.4903, -0.2614, 0.2798, -0.2586, -0.3019],
-                [-0.1013, 0.3111, 0.5783, -0.3248, -0.3842, 0.1482, -0.3628, -0.1496],
-                [-0.2071, 0.1669, 0.7097, -0.3152, -0.3136, 0.2520, -0.2774, -0.2208],
-            ]
-        ]
-    )
-    print(
-        "masked_self_attn_output error: ",
-        rel_error(
-            expected_masked_self_attn_output, masked_self_attn_output.detach().numpy()
-        ),
-    )
-
-    expected_attn_output = np.asarray(
-        [
-            [
-                [-0.1980, 0.4083, 0.1968, -0.3477, 0.0321, 0.4258, -0.8972, -0.2744],
-                [-0.1603, 0.4155, 0.2295, -0.3485, -0.0341, 0.3929, -0.8248, -0.2767],
-                [-0.0908, 0.4113, 0.3017, -0.3539, -0.1020, 0.3784, -0.7189, -0.2912],
-            ]
-        ]
-    )
-
-    # print('self_attn_output error: ', rel_error(expected_self_attn_output, self_attn_output.detach().numpy()))
-    # print('masked_self_attn_output error: ', rel_error(expected_masked_self_attn_output, masked_self_attn_output.detach().numpy()))
-    print(
-        "attn_output error: ",
-        rel_error(expected_attn_output, attn_output.detach().numpy()),
-    )
-
-    print()
-    print(expected_self_attn_output.shape)
-    print(self_attn_output.shape)
+        Differences from harvard's "annotated transformer" implementation:
+        -  Removed conditional dropout as this class always uses it.
+        -  Reordered dropout from before to after value matmul as cs231n has it there.
+        -  Removed dropout parameter since the class has a self.dropout defined in init.
+        """
+        d_k = query.size(-1)
+        scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
+        if mask is not None:
+            # Warning: Not entirely sure why this works - just guessed it
+            # correctly based on prior dimension manipulations.
+            mask = mask.transpose(0, 1)
+            scores = scores.masked_fill(mask == 0, -1e9)
+        p_attn = F.softmax(scores, dim=-1)
+        scores = torch.matmul(p_attn, value)
+        scores = self.dropout(scores)
+        return scores, p_attn
